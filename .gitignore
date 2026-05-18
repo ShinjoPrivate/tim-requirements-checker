@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+env/
+
+# PyInstaller / build artifacts
+build/
+dist/
+*.spec
+*.zip
+*.exe
+*.app/
+
+# Local generated/debug files
+exe.out.txt
+exe.err.txt
+inspect_*.py
+
+# User-provided/private data
+*.xlsx
+*.xlsm
+*.pdf
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
