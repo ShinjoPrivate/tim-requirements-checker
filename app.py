@@ -39,6 +39,7 @@ from pypdf import PdfReader
 # 例:
 # - "B" はB群の必要4単位を満たすために使うカテゴリ
 # - "専門" はA/B/C/D/Eの個別要件を満たした後の標準学修課程内の余剰単位などを入れるカテゴリ
+# - "標準外専門" は標準学修課程外の専門科目<C>で、総単位には含めるが専門科目群25単位には含めないカテゴリ
 ALLOWED_CATEGORIES = {
     "文系教養400",
     "文系教養500",
@@ -49,6 +50,7 @@ ALLOWED_CATEGORIES = {
     "C",
     "D/E",
     "専門",
+    "標準外専門",
     "講究",
 }
 
@@ -63,6 +65,7 @@ DISPLAY_CATEGORY_ORDER = {
     "D/E": 7,
     "講究": 8,
     "専門": 9,
+    "標準外専門": 10,
 }
 
 DISPLAY_CATEGORY_LABELS = {
@@ -76,6 +79,7 @@ DISPLAY_CATEGORY_LABELS = {
     "D/E": "D群またはE群",
     "講究": "講究科目",
     "専門": "それ以外（専門）",
+    "標準外専門": "標準外専門科目",
 }
 
 # 修了判定で画面に表示する単位要件です。
@@ -149,6 +153,10 @@ class Course:
     @property
     def is_lah(self) -> bool:
         return self.code.startswith("LAH.")
+
+    @property
+    def is_standard_outside_specialty(self) -> bool:
+        return not self.is_tim and not self.is_lah
 
     @property
     def has_ga0(self) -> bool:
@@ -235,7 +243,7 @@ def read_courses_from_excel(file_bytes: bytes) -> list[Course]:
         for row in range(1, ws.max_row + 1):
             code = normalize_text(ws.cell(row, 2).value)
             # 見出し・集計表・空行を除外し、科目コードらしい行だけを採用します。
-            if not re.match(r"^(TIM|LAH)\.", code):
+            if not re.match(r"^[A-Z]{3}\.[A-Z]?\d{3}", code):
                 continue
             # 一部のExcelでは "TIM.A.401" のように余分なドットが入る可能性があるため、
             # 後続の正規表現で扱いやすい "TIM.A401" 形式へ寄せます。
@@ -286,7 +294,7 @@ def merge_continuation_notes(ws, row: int, name: str) -> str:
     return " ".join([name, *notes]).strip()
 
 
-COURSE_CODE_RE = re.compile(r"\b(?:TIM|LAH)\.[A-Z]?\d{3}\b")
+COURSE_CODE_RE = re.compile(r"\b[A-Z]{3}\.[A-Z]?\d{3}\b")
 CREDIT_PATTERN_RE = re.compile(r"\d+(?:\.\d+)?-\d+(?:\.\d+)?-\d+(?:\.\d+)?")
 PDF_META_RE = re.compile(r"学籍番号\s*(\S+).*?氏名\s*(.+)")
 PDF_SKIP_PHRASES = (
@@ -457,6 +465,8 @@ def infer_single_category(course: Course) -> str | None:
         return "D/E"
     if course.standard_eligible:
         return "専門"
+    if course.is_standard_outside_specialty:
+        return "標準外専門"
     return None
 
 
@@ -520,6 +530,8 @@ def auto_allocate(courses: list[Course]) -> None:
         course.category = "文系教養400"
     for course in available(lambda x: x.is_lah and x.level and x.level >= 500):
         course.category = "文系教養500"
+    for course in available(lambda x: x.is_standard_outside_specialty):
+        course.category = "標準外専門"
 
 
 def evaluate_sheet(courses: list[Course], mode: str) -> dict:
@@ -586,7 +598,7 @@ def evaluate_sheet(courses: list[Course], mode: str) -> dict:
                 "name": c.name,
                 "credits": compact_number(c.credits),
                 "term": c.term,
-                "category": display_category_label(c.category),
+                "category": display_category_label(course_list_category_key(c)),
                 "source": c.source,
             }
             for c in sorted(courses, key=course_display_sort_key)
@@ -596,12 +608,25 @@ def evaluate_sheet(courses: list[Course], mode: str) -> dict:
 
 def course_display_sort_key(course: Course) -> tuple[int, str, int, str]:
     """画面の科目一覧を、利用者が確認しやすい充当先順に並べる。"""
+    category = course_list_category_key(course)
     return (
-        DISPLAY_CATEGORY_ORDER.get(course.category or "", 99),
+        DISPLAY_CATEGORY_ORDER.get(category or "", 99),
         course.sheet,
         course.row,
         course.code,
     )
+
+
+def course_list_category_key(course: Course) -> str | None:
+    """科目一覧で表示する区分。
+
+    判定計算用の course.category はGA要件などへの実充当先を保持します。
+    一方で、SSSなど標準学修課程外の専門科目は成績表上「コース標準学修課程外の
+    専門科目<C>」として見えるため、一覧では標準外専門として表示します。
+    """
+    if course.is_standard_outside_specialty:
+        return "標準外専門"
+    return course.category
 
 
 def display_category_label(category: str | None) -> str:
